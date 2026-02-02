@@ -1,0 +1,93 @@
+# Traffic Composer DSL
+environment:
+    weather: cloudy
+    time: daytime
+road_network: 
+    road_type: None
+    traffic_sign: None
+    traffic_light: green
+    lane_number: 5
+participant: 
+    ego_vehicle:
+        current_behavior: go forward
+        position_target: None
+        position_relation: None
+        speed: 40 mph
+    other_actor_1:
+        type: car
+        current_behavior: go forward
+        position_target: ego_vehicle
+        position_relation: front
+        speed: 45 mph
+    other_actor_2:
+        type: car
+        current_behavior: merging
+        position_target: other_actor_1
+        position_relation: front
+        speed: 40 mph
+
+# -----------------------------------------DSL: type_1-----------------------------------------
+# Defined Globally
+environment:
+    weather: cloudy
+    time: daytime
+road_network: 
+    road_type: None
+    traffic_sign: None
+    traffic_light: green
+    lane_number: 5
+# defined per participant
+participant:
+  ego_vehicle:
+    behavior_sequence:
+      - behavior: go forward
+        start_at: 0s
+        duration: 10s
+        speed: 40 mph
+
+      - behavior: brake
+        start_after: previous
+        duration: 2s
+
+  other_actor_1:
+    type: car
+    behavior_sequence:
+      - behavior: go forward
+        start_at: 0s
+        speed: 45 mph
+
+  other_actor_2:
+    type: car
+    behavior_sequence:
+      - behavior: merging
+        start_after: other_actor_1.go_forward + 3s
+        target: other_actor_1
+        duration: 4s
+        speed: 40 mph
+
+# -----------------------------------------DSL: type_2-----------------------------------------
+environment:
+    weather: cloudy
+    time: daytime
+road_network: 
+    road_type: None
+    traffic_sign: None
+    traffic_light: green
+    lane_number: 5
+timeline:
+  - at: 0s
+    participant:
+      ego_vehicle:
+        current_behavior: go forward
+        speed: 40 mph
+
+  - at: 3s
+    participant:
+      other_actor_2:
+        current_behavior: merging
+
+  - at: 5s
+    participant:
+      ego_vehicle:
+        current_behavior: brake
+        speed: 0 mph
