@@ -15,6 +15,7 @@ def game_loop(args):
     client.set_timeout(10.0)
 
     world = client.get_world()
+    client.load_world("Town03")
     print("Running map:", world.get_map().name)
 
     original_settings = world.get_settings()
@@ -47,7 +48,7 @@ def game_loop(args):
         world.debug.draw_point(
             loc,
             size=0.3,
-            color=carla.Color(255, 0, 0),
+            color=carla.Color(0, 0, 255),
             life_time=1000.0,
             persistent_lines=True
         )
@@ -56,13 +57,13 @@ def game_loop(args):
             loc,
             str(i),
             draw_shadow=False,
-            color=carla.Color(0, 255, 0),
+            color=carla.Color(255, 0, 0),
             life_time=1000.0,
             persistent_lines=True
         )
 
     ego_bp = blueprint_library.filter("vehicle.tesla.model3")[0]
-    ego_vehicle = world.spawn_actor(ego_bp, spawn_points[0])
+    ego_vehicle = world.spawn_actor(ego_bp, spawn_points[1])
     ego_vehicle.set_autopilot(True)
 
     # =========================
@@ -70,7 +71,7 @@ def game_loop(args):
     # =========================
     npc_vehicles = []
     npc_bp = random.choice(blueprint_library.filter("vehicle.*"))
-    npc = world.try_spawn_actor(npc_bp, spawn_points[1])
+    npc = world.try_spawn_actor(npc_bp, spawn_points[146])
     if npc:
         npc.set_autopilot(True)
         npc_vehicles.append(npc)
@@ -89,8 +90,10 @@ def game_loop(args):
 
     camera_transform = carla.Transform(
         carla.Location(
-            x=ego_vehicle.get_location().x,
-            y=ego_vehicle.get_location().y,
+            # x=ego_vehicle.get_location().x,
+            # y=ego_vehicle.get_location().y,
+            x=0,
+            y=0,
             z=DRONE_HEIGHT
         ),
         carla.Rotation(pitch=-90)
