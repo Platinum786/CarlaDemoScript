@@ -1,23 +1,15 @@
-#!/usr/bin/env python3
-
 import argparse
 import random
 import pygame
 import carla
-
+import numpy as np
 
 def game_loop(args):
-
     pygame.init()
-    pygame.font.init()
-
     client = carla.Client(args.host, args.port)
     client.set_timeout(10.0)
 
-    world = client.get_world()
-    client.load_world("Town03")
-    print("Running map:", world.get_map().name)
-
+    world = client.load_world("Town03")
     original_settings = world.get_settings()
 
     if args.sync:
@@ -26,106 +18,134 @@ def game_loop(args):
         settings.fixed_delta_seconds = 0.05
         world.apply_settings(settings)
 
-    display = pygame.display.set_mode(
-        (args.width, args.height),
-        pygame.HWSURFACE | pygame.DOUBLEBUF
-    )
-    pygame.display.set_caption("CARLA Drone View")
+    display = pygame.display.set_mode((args.width * 2, args.height), pygame.HWSURFACE | pygame.DOUBLEBUF)
     clock = pygame.time.Clock()
-
-    blueprint_library = world.get_blueprint_library()
 
     # =========================
     # SPAWN EGO
     # =========================
+
+    blueprint_library = world.get_blueprint_library()
     spawn_points = world.get_map().get_spawn_points()
-        # spawn_points = world.get_map().get_spawn_points()
-    print("Total spawn points:", len(spawn_points))
 
-    for i, sp in enumerate(spawn_points):
-        loc = sp.location + carla.Location(z=3.0)   # raise above ground
+    # =========================
+    # WAYPOINTS
+    # =========================
+    waypoints = world.get_map().generate_waypoints(2.0)
+    junction_waypoints = [w for w in waypoints if w.is_junction]
 
-        world.debug.draw_point(
-            loc,
-            size=0.3,
-            color=carla.Color(0, 0, 255),
-            life_time=1000.0,
-            persistent_lines=True
-        )
+    count = 0
+    for w in junction_waypoints:
+        w.transform.location
+        count += 1
+        print(count, w.transform.location, w.transform.rotation)
 
-        world.debug.draw_string(
-            loc,
-            str(i),
-            draw_shadow=False,
-            color=carla.Color(255, 0, 0),
-            life_time=1000.0,
-            persistent_lines=True
-        )
-
-    ego_bp = blueprint_library.filter("vehicle.tesla.model3")[0]
-    ego_vehicle = world.spawn_actor(ego_bp, spawn_points[1])
+    ego_bp_v = blueprint_library.filter("vehicle.tesla.model3")[0]
+    ego_vehicle = world.spawn_actor(ego_bp_v, spawn_points[1])
     ego_vehicle.set_autopilot(True)
 
+
     # =========================
-    # SPAWN ONE NPC
+    # SPAWN NPC
     # =========================
+
     npc_vehicles = []
+
+    npc_index = 20
     npc_bp = random.choice(blueprint_library.filter("vehicle.*"))
-    npc = world.try_spawn_actor(npc_bp, spawn_points[146])
+
+    npc = world.try_spawn_actor(npc_bp, spawn_points[npc_index])
     if npc:
-        npc.set_autopilot(True)
+        npc.set_autopilot(False)
         npc_vehicles.append(npc)
 
     print(f"Ego + {len(npc_vehicles)} NPC vehicles spawned")
 
     # =========================
-    # DRONE CAMERA
+    # SPAWN NEW POINT
     # =========================
-    camera_bp = blueprint_library.find("sensor.camera.rgb")
-    camera_bp.set_attribute("image_size_x", str(args.width))
-    camera_bp.set_attribute("image_size_y", str(args.height))
-    camera_bp.set_attribute("fov", "90")
 
-    DRONE_HEIGHT = 60
+    new_location = carla.Location(x=231.270920, y=0.265452-20, z=0.275307)
+    new_rotation = carla.Rotation(pitch = 0.0, yaw=95.0, roll = 0.0)
+    new_spawn_point = carla.Transform(new_location, new_rotation)
 
-    camera_transform = carla.Transform(
-        carla.Location(
-            # x=ego_vehicle.get_location().x,
-            # y=ego_vehicle.get_location().y,
-            x=0,
-            y=0,
-            z=DRONE_HEIGHT
-        ),
-        carla.Rotation(pitch=-90)
-    )
+    new_bp = random.choice(blueprint_library.filter("vehicle.*"))
+    new_npc = world.try_spawn_actor(new_bp, new_spawn_point) #spawn_points
 
-    camera = world.spawn_actor(camera_bp, camera_transform)
+    if new_npc:
+        npc.set_autopilot(False)
+        print("New vehicle spawned")
+    else:
+        print("Spawn failed. Is the point blocked or underground?")
 
-    surface = None
+    # --- Sensor Surfaces ---
+    # We use a dictionary or a list to keep references mutable inside callbacks
+    shared_data = {'ego_surface': None, 'drone_surface': None}
 
-    def process_image(image):
-        nonlocal surface
+    def on_ego_image(image):
         image.convert(carla.ColorConverter.Raw)
-        surface = pygame.image.frombuffer(
-            image.raw_data,
-            (image.width, image.height),
-            "RGBA"
-        ).convert()
+        array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+        array = np.reshape(array, (image.height, image.width, 4))
+        array = array[:, :, :3]
+        array = array[:, :, ::-1]
+        shared_data['ego_surface'] = pygame.surfarray.make_surface(array.swapaxes(0, 1))
 
-    camera.listen(process_image)
+    def on_drone_image(image):
+        image.convert(carla.ColorConverter.Raw)
+        array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+        array = np.reshape(array, (image.height, image.width, 4))
+        array = array[:, :, :3]
+        array = array[:, :, ::-1]
+        shared_data['drone_surface'] = pygame.surfarray.make_surface(array.swapaxes(0, 1))
 
-    TOTAL_TIME = 20.0
+    # --- Camera Setup ---
+    cam_bp = blueprint_library.find("sensor.camera.rgb")
+    cam_bp.set_attribute("image_size_x", str(args.width))
+    cam_bp.set_attribute("image_size_y", str(args.height))
+
+    # Ego Camera (Attached)
+    ego_cam = world.spawn_actor(
+        cam_bp, 
+        carla.Transform(carla.Location(x=-6, z=2.5), carla.Rotation(pitch=-15)),
+        attach_to=ego_vehicle
+    )
+    ego_cam.listen(on_ego_image)
+
+    # Drone Camera (Floating)
+    drone_cam = world.spawn_actor(
+        cam_bp,
+        carla.Transform(carla.Location(z=80), carla.Rotation(pitch=-90))
+    )
+    drone_cam.listen(on_drone_image)
+
     start_time = None
+    running = True
 
     try:
         while True:
+            if args.sync: world.tick()
+            else: world.wait_for_tick()
 
+            # Update Drone Position
+            ego_loc = ego_vehicle.get_location()
+            drone_cam.set_transform(carla.Transform(
+                carla.Location(x=ego_loc.x, y=ego_loc.y, z=80),
+                carla.Rotation(pitch=-90)
+            ))
+
+            # Rendering
+            if shared_data['drone_surface']:
+                display.blit(shared_data['drone_surface'], (0, 0))
+            if shared_data['ego_surface']:
+                display.blit(shared_data['ego_surface'], (args.width, 0))
+
+            pygame.display.flip()
             clock.tick(60)
 
-            if args.sync:
-                world.tick()
-            else:
-                world.wait_for_tick()
+            control = carla.VehicleControl(throttle=0.8, brake=0.0)
+            npc.apply_control(control)
+
+            new_npc_start_time = 13.0
 
             sim_time = world.get_snapshot().timestamp.elapsed_seconds
             if start_time is None:
@@ -133,57 +153,33 @@ def game_loop(args):
 
             elapsed = sim_time - start_time
 
-            if elapsed >= TOTAL_TIME:
-                print("Finished 20 seconds.")
-                break
-
-            # =========================
-            # DRONE FOLLOW EGO
-            # =========================
-            ego_loc = ego_vehicle.get_location()
-            drone_transform = carla.Transform(
-                carla.Location(
-                    x=ego_loc.x,
-                    y=ego_loc.y,
-                    z=DRONE_HEIGHT
-                ),
-                carla.Rotation(pitch=-90)
-            )
-            camera.set_transform(drone_transform)
-
-            # =========================
-            # RENDER
-            # =========================
-            if surface is not None:
-                display.blit(surface, (0, 0))
-
-            pygame.display.flip()
+            if elapsed < new_npc_start_time:
+                control = carla.VehicleControl(throttle=0.0, brake=1.0)
+                new_npc.apply_control(control)
+            else: 
+                control = carla.VehicleControl(throttle=0.5, brake=0.0) 
+                new_npc.apply_control(control)
 
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    return
+                if event.type == pygame.QUIT: return
 
     finally:
-        print("Cleaning up actors...")
-        camera.stop()
-        camera.destroy()
+        # Proper Cleanup
+        ego_cam.stop()
+        drone_cam.stop()
         ego_vehicle.destroy()
-        for npc in npc_vehicles:
-            npc.destroy()
-
         world.apply_settings(original_settings)
         pygame.quit()
-
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=2000)
     parser.add_argument("--sync", action="store_true")
-    parser.add_argument("--res", default="1280x720")
+    parser.add_argument("--res", default="640x480")
 
     args = parser.parse_args()
-    args.width, args.height = [int(x) for x in args.res.split("x")]
+    args.width, args.height = map(int, args.res.split("x"))
 
     game_loop(args)
 
